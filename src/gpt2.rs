@@ -456,9 +456,7 @@ impl GPT2 {
                 let l_residual3 = acts.residual3.add(l * B * T * C);
 
                 // 现在进行前向传播
-                layernorm_forward(
-                    l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C,
-                );
+                layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C,);
                 matmul_forward(l_qkv, l_ln1, l_qkvw, l_qkvb, B, T, C, 3 * C);
                 attention_forward(l_atty, l_preatt, l_att, l_qkv, B, T, C, NH);
                 matmul_forward(l_attproj, l_atty, l_attprojw, l_attprojb, B, T, C, C);

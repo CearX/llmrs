@@ -318,37 +318,56 @@ pub unsafe fn matmul_backward(
                 false,  // conj_dst: 是否对 dst 做共轭转置
                 false,  // conj_lhs: 是否对 lhs 做共轭转置
                 false,  // conj_rhs: 是否对 rhs 做共轭转置
-                Parallelism::None,  // 并行化控制
+                Parallelism::Rayon(12),  // 并行化控制
             );
         });
-    let dweight_atomic = AtomicPtr::new(dweight);
-    let dbias_atomic = AtomicPtr::new(dbias);
+
+    // dweight：(OC, C)
+    // inp：(B, T, C)
+    // dout：(B, T, OC)
+    
+    // dw: [OC, C]
+    // [OC, C] = [OC, B * T] * [B * T, C]
+    // dw = dout.T * inp
+        // 调用 gemm 来进行矩阵乘法, dst := alpha×dst + beta×lhs×rhs
+        gemm::gemm( 
+            OC,  // m
+            C, // n
+            B * T,  // k
+            dweight,    // dst            // dw: [OC, C]
+            1 as isize,  // dst_cs: 输出矩阵的列步长 
+            C as isize,      // dst_rs: 输出矩阵的行步长 
+            false,   // read_dst: 是否读取dst的初始值
+            dout,    // lhs: 左乘矩阵            dout.T: [OC, B * T]
+            OC as isize,  // lhs_cs: 左乘矩阵的列步长 
+            1 as isize,      // lhs_rs: 左乘矩阵的行步长 
+            inp, // rhs: 右乘矩阵                // inp：[B * T, C]
+            1 as isize,      // rhs_cs: 右乘矩阵的列步长 
+            C as isize,  // rhs_rs: 右乘矩阵的行步长 
+            0.0,    // alpha
+            1.0,    // beta
+            false,  // conj_dst: 是否对 dst 做共轭转置
+            false,  // conj_lhs: 是否对 lhs 做共轭转置
+            false,  // conj_rhs: 是否对 rhs 做共轭转置
+            Parallelism::Rayon(12),  // 并行化控制
+        );
+    // 计算 dbias = sum(dout, axis=0)
     let dout_atomic = AtomicPtr::new(dout);
-    let inp_atomic = AtomicPtr::new(inp);
-
-//在输出通道上进行加权和偏置梯度计算
-    (0..OC as usize).into_par_iter().for_each(|o| {
-        for b in 0..B as usize {
-            for t in 0..T as usize {
+    let dbias_atomic = AtomicPtr::new(dbias);
+    (0..OC).into_par_iter().for_each(|o| {
+        let mut sum = 0.0;
+        for b in 0..B {
+            for t in 0..T {
                 let dout_raw = dout_atomic.load(Ordering::SeqCst);
-                let inp_raw = inp_atomic.load(Ordering::SeqCst);
-                let dweight_raw = dweight_atomic.load(Ordering::SeqCst);
-                let dbias_raw = dbias_atomic.load(Ordering::SeqCst);
-
-                let dout_bt = dout_raw.add(b * T as usize * OC as usize + t * OC as usize);
-                let inp_bt = inp_raw.add(b * T as usize * C as usize + t * C as usize);
-                let dwrow = dweight_raw.add(o * C as usize);
-
-                let d = *dout_bt.add(o);
-                if !dbias_raw.is_null() {
-                    *dbias_raw.add(o) += d;
-                }
-                for i in 0..C as usize {
-                    *dwrow.add(i) += *inp_bt.add(i) * d;
-                }
+                let dout_bt = dout_raw.add(b * T * OC + t * OC);
+                sum += *dout_bt.add(o);
             }
         }
+        if !dbias_atomic.load(Ordering::SeqCst).is_null() {
+            *dbias_atomic.load(Ordering::SeqCst).add(o) += sum;
+        }
     });
+
 }
 
 pub unsafe fn attention_forward(
