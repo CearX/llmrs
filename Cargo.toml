@@ -6,4 +6,6 @@ edition = "2021"
 [dependencies]
 gemm = "0.18.0"
 rayon = "1.9.0"
-
+tensor = { git = "https://github.com/InfiniTensor/InfiniLM.git", branch = "dev" }
+gguf = { git = "https://github.com/InfiniTensor/InfiniLM.git", branch = "dev" }
+test-utils = { git = "https://github.com/InfiniTensor/InfiniLM.git", branch = "dev" }

@@ -4,46 +4,82 @@ use std::{mem, ptr};
 use core::slice;
 use std::alloc::{self, alloc, Layout};
 
-use crate::passes::*; 
+use crate::passes::*;
+use crate::common::tensor::Tensor_; 
+use tensor::*;
 
 pub struct ParameterTensors {
-    pub wte: *mut f32,       // 令牌嵌入（V，C）。
-    pub wpe: *mut f32,       // 位置嵌入（maxT，C）。
-    pub ln1w: *mut f32,      // 第一层的层归一化权重（L，C）。
-    pub ln1b: *mut f32,      // 第一层的层归一化偏差（L，C）。
-    pub qkvw: *mut f32,      // 查询、键、值权重（L、3*C、C）。
-    pub qkvb: *mut f32,      // 查询、键、值偏差 (L、3*C)。
-    pub attprojw: *mut f32,  // 注意力投射权重（L、C、C）。
-    pub attprojb: *mut f32,  // 注意投射偏差（L，C）。
-    pub ln2w: *mut f32,      // 第二层的层归一化权重（L，C）。
-    pub ln2b: *mut f32,      // 第二层的层归一化偏差（L，C）。
-    pub fcw: *mut f32,       // 全连接权重（L、4*C、C）。
-    pub fcb: *mut f32,       // 全连接偏置（L、4*C）。
-    pub fcprojw: *mut f32,   // 全连接投影权重（L、C、4*C）。
-    pub fcprojb: *mut f32,   // 全连接投影偏差（L，C）。
-    pub lnfw: *mut f32,      // 最终层归一化权重 (C)。
-    pub lnfb: *mut f32,      // 最终层归一化偏差 (C)。
+// ↓transformer
+    pub wte: Tensor_<f32>,       // 令牌嵌入（V，C）。
+    pub wpe: Tensor_<f32>,       // 位置嵌入（maxT，C）。
+// ↓bolcks * 12 
+    // ln1
+    pub ln1w: Tensor_<f32>,      // 第一层的层归一化权重（L，C）。
+    pub ln1b: Tensor_<f32>,      // 第一层的层归一化偏差（L，C）。
+    // attn
+    pub qkvw: Tensor_<f32>,      // 查询、键、值权重（L、3*C、C）。
+    pub qkvb: Tensor_<f32>,      // 查询、键、值偏差 (L、3*C)。
+    pub attprojw: Tensor_<f32>,  // 注意力投射权重（L、C、C）。
+    pub attprojb: Tensor_<f32>,  // 注意投射偏差（L，C）。
+    // ln2
+    pub ln2w: Tensor_<f32>,      // 第二层的层归一化权重（L，C）。
+    pub ln2b: Tensor_<f32>,      // 第二层的层归一化偏差（L，C）。
+    // MLP
+        // fc
+    pub fcw: Tensor_<f32>,       // 全连接权重（L、4*C、C）。
+    pub fcb: Tensor_<f32>,       // 全连接偏置（L、4*C）。
+        // gelu()
+        // fcproj
+    pub fcprojw: Tensor_<f32>,   // 全连接投影权重（L、C、4*C）。
+    pub fcprojb: Tensor_<f32>,   // 全连接投影偏差（L，C）。
+// ↑blocks * 12
+    pub lnfw: Tensor_<f32>,      // 最终层归一化权重 (C)。
+    pub lnfb: Tensor_<f32>,      // 最终层归一化偏差 (C)。
+// ↑transformer
+// lm_head
 }
-
+// GPT(
+//     (transformer): ModuleDict(
+//       (wte): Embedding(50257, 768)
+//       (wpe): Embedding(1024, 768)
+//       (h): ModuleList(
+//         (0-11): 12 x Block(
+//           (ln_1): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+//           (attn): CausalSelfAttention(
+//             (c_attn): Linear(in_features=768, out_features=2304, bias=True)
+//             (c_proj): Linear(in_features=768, out_features=768, bias=True)
+//           )
+//           (ln_2): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+//           (mlp): MLP(
+//             (c_fc): Linear(in_features=768, out_features=3072, bias=True)
+//             (gelu): NewGELU()
+//             (c_proj): Linear(in_features=3072, out_features=768, bias=True)
+//           )
+//         )
+//       )
+//       (ln_f): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+//     )
+//     (lm_head): Linear(in_features=768, out_features=50257, bias=False)
+//   )
 impl ParameterTensors {
     pub fn new() -> Self {
         ParameterTensors {
-            wte: core::ptr::null_mut(),
-            wpe: core::ptr::null_mut(),
-            ln1w: core::ptr::null_mut(),
-            ln1b: core::ptr::null_mut(),
-            qkvw: core::ptr::null_mut(),
-            qkvb: core::ptr::null_mut(),
-            attprojw: core::ptr::null_mut(),
-            attprojb: core::ptr::null_mut(),
-            ln2w: core::ptr::null_mut(),
-            ln2b: core::ptr::null_mut(),
-            fcw: core::ptr::null_mut(),
-            fcb: core::ptr::null_mut(),
-            fcprojw: core::ptr::null_mut(),
-            fcprojb: core::ptr::null_mut(),
-            lnfw: core::ptr::null_mut(),
-            lnfb: core::ptr::null_mut(),
+            wte: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            wpe: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln1w: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln1b: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            qkvw: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            qkvb: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            attprojw: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            attprojb: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln2w: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln2b: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            fcw: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            fcb: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            fcprojw: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            fcprojb: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            lnfw: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            lnfb: Tensor_::new(ptr::null_mut(), 0, 0, 0),
         }
     }
 
@@ -65,9 +101,9 @@ impl ParameterTensors {
         // 分配所有张量
         let mut params_memory_iterator = params_memory;
         let mut ptrs: [*mut *mut f32; NUM_PARAMETER_TENSORS] = [
-            &mut self.wte, &mut self.wpe, &mut self.ln1w, &mut self.ln1b, &mut self.qkvw, &mut self.qkvb,
-            &mut self.attprojw, &mut self.attprojb, &mut self.ln2w, &mut self.ln2b, &mut self.fcw, &mut self.fcb,
-            &mut self.fcprojw, &mut self.fcprojb, &mut self.lnfw, &mut self.lnfb,
+            &mut self.wte.ptr, &mut self.wpe.ptr, &mut self.ln1w.ptr, &mut self.ln1b.ptr, &mut self.qkvw.ptr, &mut self.qkvb.ptr,
+            &mut self.attprojw.ptr, &mut self.attprojb.ptr, &mut self.ln2w.ptr, &mut self.ln2b.ptr, &mut self.fcw.ptr, &mut self.fcb.ptr,
+            &mut self.fcprojw.ptr, &mut self.fcprojb.ptr, &mut self.lnfw.ptr, &mut self.lnfb.ptr,
         ];
         // 将每个指针指向相应的内存位置
         for (i, ptr) in ptrs.iter_mut().enumerate() {
@@ -80,57 +116,57 @@ impl ParameterTensors {
 }
 
 pub struct ActivationTensors {  
-    pub encoded: *mut f32,       // 编码（B、T、C）  
-    pub ln1: *mut f32,           // 层归一化 1（L、B、T、C）  
-    pub ln1_mean: *mut f32,      // 层归一化 1 均值（L、B、T）  
-    pub ln1_rstd: *mut f32,      // 层归一化 1 倒数 std (L, B, T)  
-    pub qkv: *mut f32,           // 查询、键、值（L、B、T、3*C）  
-    pub atty: *mut f32,          // 注意力输出（L、B、T、C）  
-    pub preatt: *mut f32,        // 预注意分数（L、B、NH、T、T）  
-    pub att: *mut f32,           // 注意力分数（L、B、NH、T、T）  
-    pub attproj: *mut f32,       // 注意力投射（L、B、T、C）  
-    pub residual2: *mut f32,     // 第二个残差连接（L、B、T、C）  
-    pub ln2: *mut f32,           // 层归一化 2（L、B、T、C）  
-    pub ln2_mean: *mut f32,      // 层归一化 2 均值（L、B、T）  
-    pub ln2_rstd: *mut f32,      // 层归一化 2 倒数标准（L、B、T）  
-    pub fch: *mut f32,           // 全连接隐藏（L、B、T、4*C）  
-    pub fch_gelu: *mut f32,      // 全连接隐藏GELU激活（L、B、T、4*C）  
-    pub fcproj: *mut f32,        // 全连接投影（L、B、T、C）  
-    pub residual3: *mut f32,     // 第三个残差连接（L、B、T、C）  
-    pub lnf: *mut f32,           // 最终层归一化（B、T、C）  
-    pub lnf_mean: *mut f32,      // 最终层归一化平均值（B，T）  
-    pub lnf_rstd: *mut f32,      // 最终层归一化倒数 std (B, T)  
-    pub logits: *mut f32,        // 对数（B、T、V）  
-    pub probs: *mut f32,         // 概率（B、T、V）  
-    pub losses: *mut f32,        // 损失（B、T）  
+    pub encoded: Tensor_<f32>,       // 编码（B、T、C）  
+    pub ln1: Tensor_<f32>,           // 层归一化 1（L、B、T、C）  
+    pub ln1_mean: Tensor_<f32>,      // 层归一化 1 均值（L、B、T）  
+    pub ln1_rstd: Tensor_<f32>,      // 层归一化 1 倒数 std (L, B, T)  
+    pub qkv: Tensor_<f32>,           // 查询、键、值（L、B、T、3*C）  
+    pub atty: Tensor_<f32>,          // 注意力输出（L、B、T、C）  
+    pub preatt: Tensor_<f32>,        // 预注意分数（L、B、NH、T、T）  
+    pub att: Tensor_<f32>,           // 注意力分数（L、B、NH、T、T）  
+    pub attproj: Tensor_<f32>,       // 注意力投射（L、B、T、C）  
+    pub residual2: Tensor_<f32>,     // 第二个残差连接（L、B、T、C）  
+    pub ln2: Tensor_<f32>,           // 层归一化 2（L、B、T、C）  
+    pub ln2_mean: Tensor_<f32>,      // 层归一化 2 均值（L、B、T）  
+    pub ln2_rstd: Tensor_<f32>,      // 层归一化 2 倒数标准（L、B、T）  
+    pub fch: Tensor_<f32>,           // 全连接隐藏（L、B、T、4*C）  
+    pub fch_gelu: Tensor_<f32>,      // 全连接隐藏GELU激活（L、B、T、4*C）  
+    pub fcproj: Tensor_<f32>,        // 全连接投影（L、B、T、C）  
+    pub residual3: Tensor_<f32>,     // 第三个残差连接（L、B、T、C）  
+    pub lnf: Tensor_<f32>,           // 最终层归一化（B、T、C）  
+    pub lnf_mean: Tensor_<f32>,      // 最终层归一化平均值（B，T）  
+    pub lnf_rstd: Tensor_<f32>,      // 最终层归一化倒数 std (B, T)  
+    pub logits: Tensor_<f32>,        // 对数（B、T、V）  
+    pub probs: Tensor_<f32>,         // 概率（B、T、V）  
+    pub losses: Tensor_<f32>,        // 损失（B、T）  
 }
 
 impl ActivationTensors {
     pub fn new() -> Self {
         ActivationTensors {
-            encoded: core::ptr::null_mut(),
-            ln1: core::ptr::null_mut(),
-            ln1_mean: core::ptr::null_mut(),
-            ln1_rstd: core::ptr::null_mut(),
-            qkv: core::ptr::null_mut(),
-            atty: core::ptr::null_mut(),
-            preatt: core::ptr::null_mut(),
-            att: core::ptr::null_mut(),
-            attproj: core::ptr::null_mut(),
-            residual2: core::ptr::null_mut(),
-            ln2: core::ptr::null_mut(),
-            ln2_mean: core::ptr::null_mut(),
-            ln2_rstd: core::ptr::null_mut(),
-            fch: core::ptr::null_mut(),
-            fch_gelu: core::ptr::null_mut(),
-            fcproj: core::ptr::null_mut(),
-            residual3: core::ptr::null_mut(),
-            lnf: core::ptr::null_mut(),
-            lnf_mean: core::ptr::null_mut(),
-            lnf_rstd: core::ptr::null_mut(),
-            logits: core::ptr::null_mut(),
-            probs: core::ptr::null_mut(),
-            losses: core::ptr::null_mut(),
+            encoded: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln1: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln1_mean: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln1_rstd: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            qkv: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            atty: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            preatt: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            att: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            attproj: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            residual2: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln2: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln2_mean: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            ln2_rstd: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            fch: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            fch_gelu: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            fcproj: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            residual3: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            lnf: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            lnf_mean: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            lnf_rstd: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            logits: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            probs: Tensor_::new(ptr::null_mut(), 0, 0, 0),
+            losses: Tensor_::new(ptr::null_mut(), 0, 0, 0),
         }
     }
 
@@ -152,10 +188,10 @@ impl ActivationTensors {
         // 将张量分配给分配的内存
         let mut acts_memory_iterator = acts_memory;
         let mut ptrs: [*mut *mut f32; NUM_ACTIVATION_TENSORS] = [
-            &mut self.encoded,&mut self.ln1,&mut self.ln1_mean,&mut self.ln1_rstd,&mut self.qkv,&mut self.atty,
-            &mut self.preatt,&mut self.att,&mut self.attproj,&mut self.residual2, &mut self.ln2, &mut self.ln2_mean,
-            &mut self.ln2_rstd,&mut self.fch,&mut self.fch_gelu,&mut self.fcproj, &mut self.residual3,&mut self.lnf,
-            &mut self.lnf_mean,&mut self.lnf_rstd, &mut self.logits,&mut self.probs,&mut self.losses,
+            &mut self.encoded.ptr,&mut self.ln1.ptr,&mut self.ln1_mean.ptr,&mut self.ln1_rstd.ptr,&mut self.qkv.ptr,&mut self.atty.ptr,
+            &mut self.preatt.ptr,&mut self.att.ptr,&mut self.attproj.ptr,&mut self.residual2.ptr, &mut self.ln2.ptr, &mut self.ln2_mean.ptr,
+            &mut self.ln2_rstd.ptr,&mut self.fch.ptr,&mut self.fch_gelu.ptr,&mut self.fcproj.ptr, &mut self.residual3.ptr,&mut self.lnf.ptr,
+            &mut self.lnf_mean.ptr,&mut self.lnf_rstd.ptr,&mut self.logits.ptr,&mut self.probs.ptr,&mut self.losses.ptr,
         ];
         // 将已分配内存的切片分配给每个张量
         for (i, ptr) in ptrs.iter_mut().enumerate() {
@@ -333,11 +369,11 @@ impl GPT2 {
         }
 
         // 方便参数（usize有助于防止int溢出）
-        let V = self.config.vocab_size;
-        let Vp = self.config.padded_vocab_size;
-        let L = self.config.num_layers;
-        let NH = self.config.num_heads;
-        let C = self.config.channels;
+        let V = self.config.vocab_size; // 50257
+        let Vp = self.config.padded_vocab_size; // 50304
+        let L = self.config.num_layers; // 12
+        let NH = self.config.num_heads; // 12
+        let C = self.config.channels; // 768
 
         // 验证输入，所有索引必须在 [0, V) 范围内
         unsafe {
@@ -414,46 +450,46 @@ impl GPT2 {
         let mut residual: *mut f32;
 
         unsafe {
-            encoder_forward(acts.encoded, inputs, params.wte, params.wpe, B, T, C);
+            encoder_forward(acts.encoded.ptr, inputs, params.wte.ptr, params.wpe.ptr, B, T, C);
 
             for l in 0..L {
                 residual = if l == 0 {
-                    acts.encoded
+                    acts.encoded.ptr
                 } else {
-                    acts.residual3.add((l - 1) * B * T * C)
+                    acts.residual3.ptr.add((l - 1) * B * T * C)
                 };
 
                 // 获取该层的权重指针
-                let l_ln1w = params.ln1w.add(l * C);
-                let l_ln1b = params.ln1b.add(l * C);
-                let l_qkvw = params.qkvw.add(l * 3 * C * C);
-                let l_qkvb = params.qkvb.add(l * 3 * C);
-                let l_attprojw = params.attprojw.add(l * C * C);
-                let l_attprojb = params.attprojb.add(l * C);
-                let l_ln2w = params.ln2w.add(l * C);
-                let l_ln2b = params.ln2b.add(l * C);
-                let l_fcw = params.fcw.add(l * 4 * C * C);
-                let l_fcb = params.fcb.add(l * 4 * C);
-                let l_fcprojw = params.fcprojw.add(l * C * 4 * C);
-                let l_fcprojb = params.fcprojb.add(l * C);
+                let l_ln1w = params.ln1w.ptr.add(l * C);
+                let l_ln1b = params.ln1b.ptr.add(l * C);
+                let l_qkvw = params.qkvw.ptr.add(l * 3 * C * C);
+                let l_qkvb = params.qkvb.ptr.add(l * 3 * C);
+                let l_attprojw = params.attprojw.ptr.add(l * C * C);
+                let l_attprojb = params.attprojb.ptr.add(l * C);
+                let l_ln2w = params.ln2w.ptr.add(l * C);
+                let l_ln2b = params.ln2b.ptr.add(l * C);
+                let l_fcw = params.fcw.ptr.add(l * 4 * C * C);
+                let l_fcb = params.fcb.ptr.add(l * 4 * C);
+                let l_fcprojw = params.fcprojw.ptr.add(l * C * 4 * C);
+                let l_fcprojb = params.fcprojb.ptr.add(l * C);
 
                 // 获取该层激活的指针
-                let l_ln1 = acts.ln1.add(l * B * T * C);
-                let l_ln1_mean = acts.ln1_mean.add(l * B * T);
-                let l_ln1_rstd = acts.ln1_rstd.add(l * B * T);
-                let l_qkv = acts.qkv.add(l * B * T * 3 * C);
-                let l_atty = acts.atty.add(l * B * T * C);
-                let l_preatt = acts.preatt.add(l * B * NH * T * T);
-                let l_att = acts.att.add(l * B * NH * T * T);
-                let l_attproj = acts.attproj.add(l * B * T * C);
-                let l_residual2 = acts.residual2.add(l * B * T * C);
-                let l_ln2 = acts.ln2.add(l * B * T * C);
-                let l_ln2_mean = acts.ln2_mean.add(l * B * T);
-                let l_ln2_rstd = acts.ln2_rstd.add(l * B * T);
-                let l_fch = acts.fch.add(l * B * T * 4 * C);
-                let l_fch_gelu = acts.fch_gelu.add(l * B * T * 4 * C);
-                let l_fcproj = acts.fcproj.add(l * B * T * C);
-                let l_residual3 = acts.residual3.add(l * B * T * C);
+                let l_ln1 = acts.ln1.ptr.add(l * B * T * C);
+                let l_ln1_mean = acts.ln1_mean.ptr.add(l * B * T);
+                let l_ln1_rstd = acts.ln1_rstd.ptr.add(l * B * T);
+                let l_qkv = acts.qkv.ptr.add(l * B * T * 3 * C);
+                let l_atty = acts.atty.ptr.add(l * B * T * C);
+                let l_preatt = acts.preatt.ptr.add(l * B * NH * T * T);
+                let l_att = acts.att.ptr.add(l * B * NH * T * T);
+                let l_attproj = acts.attproj.ptr.add(l * B * T * C);
+                let l_residual2 = acts.residual2.ptr.add(l * B * T * C);
+                let l_ln2 = acts.ln2.ptr.add(l * B * T * C);
+                let l_ln2_mean = acts.ln2_mean.ptr.add(l * B * T);
+                let l_ln2_rstd = acts.ln2_rstd.ptr.add(l * B * T);
+                let l_fch = acts.fch.ptr.add(l * B * T * 4 * C);
+                let l_fch_gelu = acts.fch_gelu.ptr.add(l * B * T * 4 * C);
+                let l_fcproj = acts.fcproj.ptr.add(l * B * T * C);
+                let l_residual3 = acts.residual3.ptr.add(l * B * T * C);
 
                 // 现在进行前向传播
                 layernorm_forward(l_ln1, l_ln1_mean, l_ln1_rstd, residual, l_ln1w, l_ln1b, B, T, C,);
@@ -468,18 +504,18 @@ impl GPT2 {
                 residual_forward(l_residual3, l_residual2, l_fcproj, B * T * C);
             }
 
-            residual = acts.residual3.add((L - 1) * B * T * C); // 最后一个残差位于残差3中
-            layernorm_forward(acts.lnf, acts.lnf_mean, acts.lnf_rstd, residual, params.lnfw, params.lnfb, B, T, C);
-            matmul_forward(acts.logits, acts.lnf, params.wte, core::ptr::null_mut(), B, T, C, Vp);
-            softmax_forward(acts.probs, acts.logits, B, T, V, Vp);
+            residual = acts.residual3.ptr.add((L - 1) * B * T * C); // 最后一个残差位于残差3中
+            layernorm_forward(acts.lnf.ptr, acts.lnf_mean.ptr, acts.lnf_rstd.ptr, residual, params.lnfw.ptr, params.lnfb.ptr, B, T, C);
+            matmul_forward(acts.logits.ptr, acts.lnf.ptr, params.wte.ptr, core::ptr::null_mut(), B, T, C, Vp);
+            softmax_forward(acts.probs.ptr, acts.logits.ptr, B, T, V, Vp);
 
             // 如果我们有目标，还可以转发交叉熵损失函数
             if !targets.is_null() {
-                crossentropy_forward(self.acts.losses, self.acts.probs, targets, B, T, Vp);
+                crossentropy_forward(self.acts.losses.ptr, self.acts.probs.ptr, targets, B, T, Vp);
                 // 为了方便起见，还评估平均损失
                 let mut mean_loss = 0.0;
                 for i in 0..(B * T) {
-                    mean_loss += *self.acts.losses.add(i);
+                    mean_loss += *self.acts.losses.ptr.add(i);
                 }
                 mean_loss /= (B * T) as f32;
                 self.mean_loss = mean_loss;
@@ -541,77 +577,77 @@ impl GPT2 {
         // 总的最终损失作为批次中所有 (B,T) 位置的所有损失的平均值
         let dloss_mean = 1.0 / (B * T) as f32;
         for i in 0..(B * T) {
-            *grads_acts.losses.add(i) = dloss_mean;
+            *grads_acts.losses.ptr.add(i) = dloss_mean;
         }
 
-        crossentropy_softmax_backward(grads_acts.logits, grads_acts.losses, acts.probs, self.targets, B, T, V, Vp); 
-        matmul_backward(grads_acts.lnf, grads.wte, core::ptr::null_mut(), grads_acts.logits, acts.lnf, params.wte, B, T, C, Vp);
-        let mut residual = acts.residual3.add((L - 1) * B * T * C); // 最后一层的残差
-        let mut dresidual = grads_acts.residual3.add((L - 1) * B * T * C); // 写入最后一层的残差
-        layernorm_backward(dresidual, grads.lnfw, grads.lnfb, grads_acts.lnf, residual, params.lnfw, acts.lnf_mean, acts.lnf_rstd, B, T, C);
+        crossentropy_softmax_backward(grads_acts.logits.ptr, grads_acts.losses.ptr, acts.probs.ptr, self.targets, B, T, V, Vp); 
+        matmul_backward(grads_acts.lnf.ptr, grads.wte.ptr, core::ptr::null_mut(), grads_acts.logits.ptr, acts.lnf.ptr, params.wte.ptr, B, T, C, Vp);
+        let mut residual = acts.residual3.ptr.add((L - 1) * B * T * C); // 最后一层的残差
+        let mut dresidual = grads_acts.residual3.ptr.add((L - 1) * B * T * C); // 写入最后一层的残差
+        layernorm_backward(dresidual, grads.lnfw.ptr, grads.lnfb.ptr, grads_acts.lnf.ptr, residual, params.lnfw.ptr, acts.lnf_mean.ptr, acts.lnf_rstd.ptr, B, T, C);
 
         for l in (0..L).rev() {
             residual = if l == 0 {
-                acts.encoded
+                acts.encoded.ptr
             } else {
-                acts.residual3.add((l - 1) * B * T * C)
+                acts.residual3.ptr.add((l - 1) * B * T * C)
             };
 
             dresidual = if l == 0 {
-                grads_acts.encoded
+                grads_acts.encoded.ptr
             } else {
-                grads_acts.residual3.add((l - 1) * B * T * C)
+                grads_acts.residual3.ptr.add((l - 1) * B * T * C)
             };
 
             // 获取该层的权重指针
-            let l_ln1w = params.ln1w.add(l * C);
-            let l_qkvw = params.qkvw.add(l * 3 * C * C);
-            let l_attprojw = params.attprojw.add(l * C * C);
-            let l_ln2w = params.ln2w.add(l * C);
-            let l_fcw = params.fcw.add(l * 4 * C * C);
-            let l_fcprojw = params.fcprojw.add(l * C * 4 * C);
+            let l_ln1w = params.ln1w.ptr.add(l * C);
+            let l_qkvw = params.qkvw.ptr.add(l * 3 * C * C);
+            let l_attprojw = params.attprojw.ptr.add(l * C * C);
+            let l_ln2w = params.ln2w.ptr.add(l * C);
+            let l_fcw = params.fcw.ptr.add(l * 4 * C * C);
+            let l_fcprojw = params.fcprojw.ptr.add(l * C * 4 * C);
 
             // 获取该层权重梯度的指针
-            let dl_ln1w = grads.ln1w.add(l * C);
-            let dl_ln1b = grads.ln1b.add(l * C);
-            let dl_qkvw = grads.qkvw.add(l * 3 * C * C);
-            let dl_qkvb = grads.qkvb.add(l * 3 * C);
-            let dl_attprojw = grads.attprojw.add(l * C * C);
-            let dl_attprojb = grads.attprojb.add(l * C);
-            let dl_ln2w = grads.ln2w.add(l * C);
-            let dl_ln2b = grads.ln2b.add(l * C);
-            let dl_fcw = grads.fcw.add(l * 4 * C * C);
-            let dl_fcb = grads.fcb.add(l * 4 * C);
-            let dl_fcprojw = grads.fcprojw.add(l * C * 4 * C);
-            let dl_fcprojb = grads.fcprojb.add(l * C);
+            let dl_ln1w = grads.ln1w.ptr.add(l * C);
+            let dl_ln1b = grads.ln1b.ptr.add(l * C);
+            let dl_qkvw = grads.qkvw.ptr.add(l * 3 * C * C);
+            let dl_qkvb = grads.qkvb.ptr.add(l * 3 * C);
+            let dl_attprojw = grads.attprojw.ptr.add(l * C * C);
+            let dl_attprojb = grads.attprojb.ptr.add(l * C);
+            let dl_ln2w = grads.ln2w.ptr.add(l * C);
+            let dl_ln2b = grads.ln2b.ptr.add(l * C);
+            let dl_fcw = grads.fcw.ptr.add(l * 4 * C * C);
+            let dl_fcb = grads.fcb.ptr.add(l * 4 * C);
+            let dl_fcprojw = grads.fcprojw.ptr.add(l * C * 4 * C);
+            let dl_fcprojb = grads.fcprojb.ptr.add(l * C);
 
             // 获取该层激活的指针
-            let l_ln1 = acts.ln1.add(l * B * T * C);
-            let l_ln1_mean = acts.ln1_mean.add(l * B * T);
-            let l_ln1_rstd = acts.ln1_rstd.add(l * B * T);
-            let l_qkv = acts.qkv.add(l * B * T * 3 * C);
-            let l_atty = acts.atty.add(l * B * T * C);
-            let l_att = acts.att.add(l * B * NH * T * T);
-            let l_residual2 = acts.residual2.add(l * B * T * C);
-            let l_ln2 = acts.ln2.add(l * B * T * C);
-            let l_ln2_mean = acts.ln2_mean.add(l * B * T);
-            let l_ln2_rstd = acts.ln2_rstd.add(l * B * T);
-            let l_fch = acts.fch.add(l * B * T * 4 * C);
-            let l_fch_gelu = acts.fch_gelu.add(l * B * T * 4 * C);
+            let l_ln1 = acts.ln1.ptr.add(l * B * T * C);
+            let l_ln1_mean = acts.ln1_mean.ptr.add(l * B * T);
+            let l_ln1_rstd = acts.ln1_rstd.ptr.add(l * B * T);
+            let l_qkv = acts.qkv.ptr.add(l * B * T * 3 * C);
+            let l_atty = acts.atty.ptr.add(l * B * T * C);
+            let l_att = acts.att.ptr.add(l * B * NH * T * T);
+            let l_residual2 = acts.residual2.ptr.add(l * B * T * C);
+            let l_ln2 = acts.ln2.ptr.add(l * B * T * C);
+            let l_ln2_mean = acts.ln2_mean.ptr.add(l * B * T);
+            let l_ln2_rstd = acts.ln2_rstd.ptr.add(l * B * T);
+            let l_fch = acts.fch.ptr.add(l * B * T * 4 * C);
+            let l_fch_gelu = acts.fch_gelu.ptr.add(l * B * T * 4 * C);
 
             // 获取该层激活梯度的指针
-            let dl_ln1 = grads_acts.ln1.add(l * B * T * C);
-            let dl_qkv = grads_acts.qkv.add(l * B * T * 3 * C);
-            let dl_atty = grads_acts.atty.add(l * B * T * C);
-            let dl_preatt = grads_acts.preatt.add(l * B * NH * T * T);
-            let dl_att = grads_acts.att.add(l * B * NH * T * T);
-            let dl_attproj = grads_acts.attproj.add(l * B * T * C);
-            let dl_residual2 = grads_acts.residual2.add(l * B * T * C);
-            let dl_ln2 = grads_acts.ln2.add(l * B * T * C);
-            let dl_fch = grads_acts.fch.add(l * B * T * 4 * C);
-            let dl_fch_gelu = grads_acts.fch_gelu.add(l * B * T * 4 * C);
-            let dl_fcproj = grads_acts.fcproj.add(l * B * T * C);
-            let dl_residual3 = grads_acts.residual3.add(l * B * T * C);
+            let dl_ln1 = grads_acts.ln1.ptr.add(l * B * T * C);
+            let dl_qkv = grads_acts.qkv.ptr.add(l * B * T * 3 * C);
+            let dl_atty = grads_acts.atty.ptr.add(l * B * T * C);
+            let dl_preatt = grads_acts.preatt.ptr.add(l * B * NH * T * T);
+            let dl_att = grads_acts.att.ptr.add(l * B * NH * T * T);
+            let dl_attproj = grads_acts.attproj.ptr.add(l * B * T * C);
+            let dl_residual2 = grads_acts.residual2.ptr.add(l * B * T * C);
+            let dl_ln2 = grads_acts.ln2.ptr.add(l * B * T * C);
+            let dl_fch = grads_acts.fch.ptr.add(l * B * T * 4 * C);
+            let dl_fch_gelu = grads_acts.fch_gelu.ptr.add(l * B * T * 4 * C);
+            let dl_fcproj = grads_acts.fcproj.ptr.add(l * B * T * C);
+            let dl_residual3 = grads_acts.residual3.ptr.add(l * B * T * C);
 
             // 反向传播这一层
             residual_backward(dl_residual2, dl_fcproj, dl_residual3, B * T * C);
@@ -625,7 +661,7 @@ impl GPT2 {
             matmul_backward(dl_ln1, dl_qkvw, dl_qkvb, dl_qkv, l_ln1, l_qkvw, B, T, C, 3 * C);
             layernorm_backward(dresidual, dl_ln1w, dl_ln1b, dl_ln1, residual, l_ln1w, l_ln1_mean, l_ln1_rstd, B,T, C,);
         }
-        encoder_backward(grads.wte, grads.wpe, grads_acts.encoded, self.inputs, B, T, C);
+        encoder_backward(grads.wte.ptr, grads.wpe.ptr, grads_acts.encoded.ptr, self.inputs, B, T, C);
     }
 
     // 使用 AdamW 优化更新 GPT2 模型参数。
