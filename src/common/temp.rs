@@ -49,6 +49,126 @@ pub struct Gpt2Meta<'a> {
     pub mean_loss: f32,                  // 前向传播计算的平均损失值
 }
 
+pub struct Gpt2Meta_new {
+    // gpt2config
+    pub max_seq_len: usize,      // 最大序列长度  1024 // context_length
+    pub vocab_size: usize,       // 词汇量  50257 
+    pub padded_vocab_size: usize, // 填充词汇量  50304
+    pub num_layers: usize,       // 层数  12 // block_count
+    pub num_heads: usize,        // 注意力头的数量 12  // attention.head_count
+    pub channels: usize,         // 通道数  768 // embeding_length
+    // gguf_metaKV
+    pub epsilon: f32,           // attention.layer_norm_epsilon // 1e-5 
+}
+
+pub struct Storage<T> {
+    pub meta: Gpt2Meta_new, // Gpt2元信息
+    pub wte: T,       // 令牌嵌入（V，C）。
+    pub wpe: T,       // 位置嵌入（maxT，C）。
+    pub blocks: Box<[BlkStorage<T>]>,
+    pub lnfw: T,      // 最终层归一化权重 (C)。
+    pub lnfb: T,      // 最终层归一化偏差 (C)。
+}
+
+pub struct BlkStorage<T> {
+// ↓bolcks * 12 
+    // ln1
+    pub ln1w: T,      // 第一层的层归一化权重（L，C）。
+    pub ln1b: T,      // 第一层的层归一化偏差（L，C）。
+    // attn
+    pub qkvw: T,      // 查询、键、值权重（L、3*C、C）。
+    pub qkvb: T,      // 查询、键、值偏差 (L、3*C)。
+    pub attprojw: T,  // 注意力投射权重（L、C、C）。
+    pub attprojb: T,  // 注意投射偏差（L，C）。
+    // ln2
+    pub ln2w: T,      // 第二层的层归一化权重（L，C）。
+    pub ln2b: T,      // 第二层的层归一化偏差（L，C）。
+    // MLP
+        // fc
+    pub fcw: T,       // 全连接权重（L、4*C、C）。
+    pub fcb: T,       // 全连接偏置（L、4*C）。
+        // gelu()
+        // fcproj
+    pub fcprojw: T,   // 全连接投影权重（L、C、4*C）。
+    pub fcprojb: T,   // 全连接投影偏差（L，C）。
+// ↑blocks * 12
+}
+
+pub struct  Storage_new<T> {
+    pub meta: Gpt2Meta_new,
+    pub blocks: Box<[BlkStorage_new<T>]>,
+    pub output_norm_bias: T,
+    pub output_norm_weight: T,
+    pub position_embd_weight: T,
+    pub token_embd_weight: T,
+    pub output_weight: T,
+}
+pub struct BlkStorage_new<T> {
+    pub attn_qkv_bias: T,
+    pub attn_qkv_weight: T,
+    pub attn_output_bias: T,
+    pub attn_output_weight: T,
+    pub attn_norm_bias: T,
+    pub attn_norm_weight: T,
+
+    pub ffn_up_bias: T,
+    pub ffn_up_weight: T,
+    pub ffn_down_bias: T,
+    pub ffn_down_weight: T,
+    pub ffn_norm_bias: T,
+    pub ffn_norm_weight: T,
+}
+
+impl<'a> Storage_new<&'a [u8]> {
+    pub fn from_gguf(gguf: &GGufModel<'a>) -> Self {
+        let output_norm_bias = &gguf.tensors["output_norm.bias"];
+        let output_norm_weight = &gguf.tensors["output_norm.weight"];
+        let position_embd_weight = &gguf.tensors["position_embd.weight"];
+        let token_embd_weight = &gguf.tensors["token_embd.weight"];
+        let output_weight = &gguf.tensors["output.weight"];
+        #[rustfmt::skip]
+        let mut meta = Gpt2Meta_new {
+            max_seq_len: gguf.llm_context_length().unwrap(),
+            vocab_size: 50257,
+            padded_vocab_size: 50304,
+            num_layers: gguf.llm_block_count().unwrap(),
+            num_heads: gguf.llm_attention_head_count().unwrap(),
+            channels: gguf.llm_embedding_length().unwrap(),
+
+            epsilon: 1e-5,
+        };
+        #[rustfmt::skip]
+        let blocks = (0..meta.num_layers)
+            .map(|i| BlkStorage_new {
+                attn_qkv_bias:      gguf.tensors[&*format!("blk.{i}.attn_qkv.bias"     )].data,
+                attn_qkv_weight:    gguf.tensors[&*format!("blk.{i}.attn_qkv.weight"   )].data,
+                attn_output_bias:   gguf.tensors[&*format!("blk.{i}.attn_output.bias"  )].data,
+                attn_output_weight: gguf.tensors[&*format!("blk.{i}.attn_output.weight")].data,
+                attn_norm_bias:     gguf.tensors[&*format!("blk.{i}.attn_norm.bias"    )].data,
+                attn_norm_weight:   gguf.tensors[&*format!("blk.{i}.attn_norm.weight"  )].data,
+
+                ffn_up_bias:        gguf.tensors[&*format!("blk.{i}.ffn_up.bias"       )].data,
+                ffn_up_weight:      gguf.tensors[&*format!("blk.{i}.ffn_up.weight"     )].data,
+                ffn_down_bias:      gguf.tensors[&*format!("blk.{i}.ffn_down.bias"     )].data,
+                ffn_down_weight:    gguf.tensors[&*format!("blk.{i}.ffn_down.weight"   )].data,
+                ffn_norm_bias:      gguf.tensors[&*format!("blk.{i}.ffn_norm.bias"     )].data,
+                ffn_norm_weight:    gguf.tensors[&*format!("blk.{i}.ffn_norm.weight"   )].data,
+            })
+            .collect();
+
+        Self {
+            meta,
+            blocks,
+            output_norm_bias: output_norm_bias.data,
+            output_norm_weight: output_norm_weight.data,
+            position_embd_weight: position_embd_weight.data,
+            token_embd_weight: token_embd_weight.data,
+            output_weight: output_weight.data,
+    }
+}
+}
+
+
 pub struct ParameterTensors_orgin {
 // ↓transformer
     pub wte: Tensor<f32>,       // 令牌嵌入（V，C）。
@@ -114,29 +234,7 @@ pub struct ParameterTensorsStorage<T> {
     pub lnfb: T,      // 最终层归一化偏差 (C)。
 }
 
-pub struct BlkStorage<T> {
-// ↓bolcks * 12 
-    // ln1
-    pub ln1w: T,      // 第一层的层归一化权重（L，C）。
-    pub ln1b: T,      // 第一层的层归一化偏差（L，C）。
-    // attn
-    pub qkvw: T,      // 查询、键、值权重（L、3*C、C）。
-    pub qkvb: T,      // 查询、键、值偏差 (L、3*C)。
-    pub attprojw: T,  // 注意力投射权重（L、C、C）。
-    pub attprojb: T,  // 注意投射偏差（L，C）。
-    // ln2
-    pub ln2w: T,      // 第二层的层归一化权重（L，C）。
-    pub ln2b: T,      // 第二层的层归一化偏差（L，C）。
-    // MLP
-        // fc
-    pub fcw: T,       // 全连接权重（L、4*C、C）。
-    pub fcb: T,       // 全连接偏置（L、4*C）。
-        // gelu()
-        // fcproj
-    pub fcprojw: T,   // 全连接投影权重（L、C、4*C）。
-    pub fcprojb: T,   // 全连接投影偏差（L，C）。
-// ↑blocks * 12
-}
+
 
 impl<'a> ParameterTensorsStorage<&'a [u8]> {
     pub fn from_gguf(gguf: &GGufModel<'a>) -> Self {
