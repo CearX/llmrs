@@ -1,7 +1,13 @@
 
-use gguf::*;
-// use tensor::*;
+use std::{ops::{DerefMut, Range, RangeBounds}, path::Path};
 
+use common::{borrow, Contiguous};
+use ext::Mmap;
+use ggml_quants::digit_layout::DigitLayout;
+use gguf::*;
+use tensor::*;
+use super::weights::Weights;
+// type Worker<'w> = LlamaWorker<Operators, Weights<'w>>;
 
 #[derive(Clone, Debug)]
 pub struct Gpt2Meta {
@@ -52,12 +58,12 @@ impl<'a> Storage<&'a [u8]> {
         let output_weight = &gguf.tensors["output.weight"];
         #[rustfmt::skip]
         let mut meta = Gpt2Meta {
-            max_seq_len: gguf.llm_context_length().unwrap(),
-            vocab_size: 50257,
-            padded_vocab_size: 50304,
-            num_layers: gguf.llm_block_count().unwrap(),
-            num_heads: gguf.llm_attention_head_count().unwrap(),
-            channels: gguf.llm_embedding_length().unwrap(),
+            max_seq_len         : gguf.llm_context_length().unwrap(),
+            vocab_size          : 50257,
+            padded_vocab_size   : 50304,
+            num_layers          : gguf.llm_block_count().unwrap(),
+            num_heads           : gguf.llm_attention_head_count().unwrap(),
+            channels            : gguf.llm_embedding_length().unwrap(),
 
             epsilon: 1e-5,
         };
@@ -92,18 +98,92 @@ impl<'a> Storage<&'a [u8]> {
 }
 }
 
+fn normalize(range: impl RangeBounds<usize>, count: usize) -> Range<usize> {
+    use std::ops::Bound::{Excluded, Included, Unbounded};
+    let start = match range.start_bound() {
+        Included(&i) => i,
+        Excluded(&i) => i + 1,
+        Unbounded => 0,
+    };
+    let end = match range.end_bound() {
+        Included(&i) => i + 1,
+        Excluded(&i) => i,
+        Unbounded => count,
+    };
+    assert!(start < end && end <= count);
+    start..end
+}
+
+
+impl<'w> BlkStorage<&'w [u8]> {
+    pub fn distribute<U>(
+        &self,
+        meta: &Gpt2Meta,
+        range: impl RangeBounds<usize>,
+        count: usize,
+        mut f: impl FnMut(usize) -> U,
+    ) -> BlkStorage<Contiguous<'w, U>>
+    where
+        U: DerefMut<Target = [u8]>,
+    {
+        let range = normalize(range, count);
+        let start = range.start;
+        let len = range.len();
+        assert!(0 < len && range.end <= count);
+
+        fn tensor<'t>(dt: DigitLayout, shape: &[usize], data: &'t [u8]) -> Tensor<&'t [u8]> {
+            Tensor::new(dt, shape).map(|size| {
+                debug_assert_eq!(size, data.len());
+                data
+            })
+        }
+
+        BlkStorage {
+            attn_qkv_bias: borrow(&self.attn_norm_bias),
+            attn_qkv_weight: borrow(&self.attn_qkv_weight),
+            attn_output_bias: borrow(&self.attn_output_bias),
+            attn_output_weight: borrow(&self.attn_output_weight),
+            attn_norm_bias: borrow(&self.attn_norm_bias),
+            attn_norm_weight: borrow(&self.attn_norm_weight),
+
+            ffn_up_bias: borrow(&self.ffn_norm_bias),
+            ffn_up_weight: borrow(&self.ffn_up_weight),
+            ffn_down_bias: borrow(&self.ffn_norm_bias),
+            ffn_down_weight: borrow(&self.ffn_down_weight),
+            ffn_norm_bias: borrow(&self.ffn_norm_bias),
+            ffn_norm_weight: borrow(&self.ffn_norm_weight),
+        }
+    }
+}
+
+
+pub fn map_gguf_files() -> Option<Box<[Mmap]>> {
+    let Some(path) = std::env::var_os("TEST_MODEL") else {
+        println!("TEST_MODEL not set");
+        return None;
+    };
+    let path = Path::new(&path);
+    if !path.is_file() {
+        println!("{path:?} not found");
+        return None;
+    }
+    Some(map_files(path))
+}
+
 #[test]
 fn gguf_storage_test() {
-    let Some(shards) = test_utils::map_gguf_files() else {
+    let Some(shards) = map_gguf_files() else {
         return;
     };
     let gguf = GGufModel::read(shards.iter().map(|s| &**s));
+    let gpt2 = Storage::from_gguf(&gguf);
+    println!("{:?}", gpt2.meta);
+    // ---- common::storage::gguf_storage_test stdout ----
+    // Gpt2Meta { max_seq_len: 1024, vocab_size: 50257, padded_vocab_size: 50304, num_layers: 12, num_heads: 12, channels: 768, epsilon: 1e-5 }
 
-    let model = Storage::from_gguf(&gguf);
-    // assert_eq!(model.meta.distribute, 1);
-    // let weights = Weights::new(&model, 0, 1);
-    let Storage {
-        meta,  ..
-    } = model;
-    println!("{meta:?}");
+    let weights = Weights::new(&gpt2, .., 1);
+    // let mut worker = Worker::new(&Cpu, meta.clone(), weights, true);
 }
+
+
+

@@ -8,4 +8,5 @@ gemm = "0.18.0"
 rayon = "1.9.0"
 tensor = { git = "https://github.com/InfiniTensor/InfiniLM.git", branch = "dev" }
 gguf = { git = "https://github.com/InfiniTensor/InfiniLM.git", branch = "dev" }
-test-utils = { git = "https://github.com/InfiniTensor/InfiniLM.git", branch = "dev" }
+common = { git = "https://github.com/InfiniTensor/InfiniLM.git", branch = "dev" }
+operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "93d84ae", default-features = false }
